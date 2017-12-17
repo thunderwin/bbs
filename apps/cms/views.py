@@ -1,10 +1,13 @@
 from flask import Blueprint,views,render_template,request,session,redirect,url_for,g,jsonify
-from .forms import LoginForm,ResetpwdForm #平级别引用 前面加.
+from .forms import LoginForm,ResetpwdForm,ResetEmailForm #平级别引用 前面加.
 from .models import CMSUser
 from .decoraters import login_required
 import config
-from exts import db
-from utils import restful
+from exts import db,mail
+from utils import restful,cache
+from flask_mail import Message
+import string
+import random
 
 cms_bp = Blueprint('cms',__name__,url_prefix='/cms') #创建蓝图对象
 
@@ -13,6 +16,34 @@ cms_bp = Blueprint('cms',__name__,url_prefix='/cms') #创建蓝图对象
 def index():
     # g.cms_user
     return render_template('cms/cms_index.html')
+
+@cms_bp.route('/email_captcha/')
+def email_carptcha():
+    email = request.args.get('email')
+    if not email:
+        return restful.params_error('请输入邮箱！')
+
+    source  = list(string.ascii_letters) #获取随机的字母列表
+    source.extend(map(lambda x:str(x),range(0,10))) # 获取随机数字列表，并转化为字符串类型
+    captcha = "".join(random.sample(source,6)) #在生成的随机列表中选出6位字符
+
+    message = Message('BBS论坛修改邮箱验证码',recipients=[email],body='您的验证码是%s' % captcha)
+    try:
+        mail.send(message)
+    except:
+        return restful.server_error()
+    cache.set(email,captcha) #把邮箱和验证码存到内存中，memcache
+    return restful.success()
+
+
+
+@cms_bp.route('/email/')
+def send_mail():
+    message = Message('邮件测试',recipients=['985684077@qq.com'],body='测试以下')
+    mail.send(message)
+    return 'sucess'
+
+
 
 @cms_bp.route('/logout/')
 @login_required  #注销前判断你是不是登录了
@@ -81,6 +112,14 @@ class ResetEmailView(views.MethodView):
     def get(self):
         return render_template('cms/cms_restemail.html')
     def post(self):
-        pass
+        form = ResetEmailForm(request.form)
+        if form.validate(): #如果验证通过
+            email = form.email.data
+            g.cms_user.email  = email  # 为什么修改g 对象，却能修改数据库里面的值？
+            db.session.commit() # 这里为什么能直接提交数据库？
+            return restful.success()
+        else:
+            return restful.params_error(form.get_error())
+
 
 cms_bp.add_url_rule('/resetemail/',view_func=ResetEmailView.as_view('resetemail'))
